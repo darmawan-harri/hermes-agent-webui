@@ -1,0 +1,6 @@
+ROOT_HERMES_FOLDER = "/root/.hermes/"
+SCRIPTS_FOLDER = "/root/.hermes/scripts"
+MEMORIES_FOLDER = "/root/.hermes/memories"
+IMAGE_CACHE_FOLDER = "/root/.hermes/image_cache"
+BROWSER_SCREENSHOTS_FOLDER = "/root/.hermes/browser_screenshots"
+SESSIONS_FOLDER = "/root/.hermes/sessions"

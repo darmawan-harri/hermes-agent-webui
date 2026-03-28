@@ -1,0 +1,15 @@
+[Unit]
+Description=Hermes WebUI Flask Application
+After=network.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/opt/hermes_webui
+Environment="PATH=/opt/hermes_webui/venv/bin"
+ExecStart=/opt/hermes_webui/venv/bin/python app.py
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,18 @@
+<VirtualHost *:4436>
+    ServerName hermes.local
+    ServerAlias 192.168.70.31
+
+    SSLEngine on
+    SSLCertificateFile /etc/apache2/ssl/apache.crt
+    SSLCertificateKeyFile /etc/apache2/ssl/apache.key
+
+    ProxyPreserveHost On
+    ProxyPass / http://127.0.0.1:5000/
+    ProxyPassReverse / http://127.0.0.1:5000/
+
+    RequestHeader set X-Forwarded-Proto "https"
+    RequestHeader set X-Forwarded-Port "4436"
+
+    ErrorLog ${APACHE_LOG_DIR}/hermes-error.log
+    CustomLog ${APACHE_LOG_DIR}/hermes-access.log combined
+</VirtualHost>
