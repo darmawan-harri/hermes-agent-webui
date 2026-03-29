@@ -1,6 +1,6 @@
 # Hermes WebUI
 
-Flask-based web UI untuk mengeksplorasi folder-folder di `/root/.hermes/`.
+Flask-based web UI untuk mengeksplorasi folder-folder di `/root/.hermes/` dan berinteraksi dengan Hermes Agent.
 
 ## Fitur
 
@@ -11,13 +11,26 @@ Flask-based web UI untuk mengeksplorasi folder-folder di `/root/.hermes/`.
   - List Skill - Eksplorasi skills
   - Scripts - Eksplorasi scripts
   - Memories - Eksplorasi memories
-  - Image Cache - Tumbnail preview gambar
+  - Image Cache - Thumbnail preview gambar
   - Browser Screenshots - Preview screenshot
   - Sessions - Table view dengan View/Delete
   - SOUL.md - Tampilkan file persona agent
   - config.yaml - Konfigurasi dengan syntax highlighting
   - state.db - Database viewer seperti phpMyAdmin
+  - Chat - Chat dengan Hermes Agent via OpenAI API
+  - Chat Settings - Konfigurasi API URL, timeout, streaming
   - Change Password - Ganti password
+
+## Chat Features
+
+- **Real-time Chat** - Chat dengan Hermes Agent
+- **Markdown Rendering** - Response dirender sebagai markdown
+- **Code Highlighting** - Syntax highlighting untuk code blocks
+- **Copy Button** - Copy code dengan satu klik
+- **Chat History** - Simpan dan load riwayat chat
+- **File Attachment** - Upload file untuk konteks chat
+- **Multiline Input** - Shift+Enter untuk baris baru
+- **Streaming Support** - Response real-time (opsional)
 
 ## JSON Viewer Features
 
@@ -68,6 +81,8 @@ a2ensite hermes-ssl
 systemctl restart apache2
 ```
 
+**Catatan:** Apache config sudah include streaming support (`proxy-sendchunked`, `proxy-nokeepalive`, `ProxyTimeout 600`).
+
 ### 4. Setup systemd Service
 
 ```bash
@@ -113,9 +128,25 @@ journalctl -u hermes-webui -f
 ├── app.py              # Main Flask application
 ├── config.py           # Configuration (folder paths)
 ├── users.db            # SQLite user database
+├── chat.db             # SQLite chat database
+├── chat_config.json    # Chat settings (API URL, timeout, streaming)
 ├── hermes-webui.service # Systemd service file
-└── venv/              # Python virtual environment
+└── venv/               # Python virtual environment
 ```
+
+## Chat Configuration
+
+Chat settings disimpan di `/opt/hermes_webui/chat_config.json`:
+
+```json
+{
+  "api_url": "http://127.0.0.1:8642/v1/chat/completions",
+  "timeout": 600,
+  "streaming": true
+}
+```
+
+Atau ubah melalui **Chat Settings** di menu.
 
 ## Konfigurasi Folder
 
@@ -128,11 +159,23 @@ MEMORIES_FOLDER = "/root/.hermes/memories"
 IMAGE_CACHE_FOLDER = "/root/.hermes/image_cache"
 BROWSER_SCREENSHOTS_FOLDER = "/root/.hermes/browser_screenshots"
 SESSIONS_FOLDER = "/root/.hermes/sessions"
+
+# Chat settings (Hermes Agent API)
+HERMES_API_URL = "http://127.0.0.1:8642/v1/chat/completions"
+HERMES_API_TIMEOUT = 600  # 10 minutes
+HERMES_STREAMING = True
 ```
+
+## Prerequisites
+
+- **Hermes Agent** berjalan dengan API Server enabled:
+  ```bash
+  API_SERVER_ENABLED=true API_SERVER_PORT=8642 hermes-gateway
+  ```
 
 ## Teknologi
 
 - **Backend:** Flask, SQLAlchemy, Flask-Login
-- **Frontend:** HTML, CSS (Dark Mode), JavaScript
-- **Server:** Apache2 with SSL (mod_proxy)
-- **Database:** SQLite (users.db, state.db)
+- **Frontend:** HTML, CSS (Dark Mode), JavaScript, Marked.js (markdown)
+- **Server:** Apache2 with SSL (mod_proxy, streaming support)
+- **Database:** SQLite (users.db, chat.db)

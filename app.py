@@ -279,6 +279,8 @@ SIDEBAR = """
     <a href="{{ url_for('sessions') }}" class="menu-item {{ 'active' if active_page == 'sessions' else '' }}">Sessions</a>
     <a href="{{ url_for('soul') }}" class="menu-item {{ 'active' if active_page == 'soul' else '' }}">SOUL.md</a>
     <a href="{{ url_for('state_db') }}" class="menu-item {{ 'active' if active_page == 'state_db' else '' }}">state.db</a>
+    <a href="{{ url_for('chat') }}" class="menu-item {{ 'active' if active_page == 'chat' else '' }}">Chat</a>
+    <a href="{{ url_for('chat_settings') }}" class="menu-item">Chat Settings</a>
     <a href="{{ url_for('settings') }}" class="menu-item {{ 'active' if active_page == 'settings' else '' }}">config.yaml</a>
     <a href="{{ url_for('change_password') }}" class="menu-item">Change Password</a>
     <a href="{{ url_for('logout') }}" class="menu-item menu-logout">Logout</a>
@@ -1204,9 +1206,37 @@ def soul():
 
 STATE_DB_PATH = os.path.join(config.ROOT_HERMES_FOLDER, "state.db")
 
+CHAT_DB_PATH = "/opt/hermes_webui/chat.db"
+
+def get_chat_db_connection():
+    import sqlite3
+    conn = sqlite3.connect(CHAT_DB_PATH, timeout=10)
+    conn.row_factory = sqlite3.Row
+    
+    # Create tables if not exist
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS chat_sessions (
+            id TEXT PRIMARY KEY,
+            title TEXT,
+            created_at REAL
+        )
+    """)
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS chat_messages (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            session_id TEXT,
+            role TEXT,
+            content TEXT,
+            timestamp REAL,
+            FOREIGN KEY (session_id) REFERENCES chat_sessions(id)
+        )
+    """)
+    conn.commit()
+    return conn
+
 def get_db_connection():
     import sqlite3
-    conn = sqlite3.connect(STATE_DB_PATH)
+    conn = sqlite3.connect(STATE_DB_PATH, timeout=10)
     conn.row_factory = sqlite3.Row
     return conn
 
@@ -1333,6 +1363,709 @@ def state_db(table_name=None):
 </body>
 </html>
 """, active_page='state_db')
+
+HERMES_API_URL = config.HERMES_API_URL if hasattr(config, 'HERMES_API_URL') else "http://127.0.0.1:8642/v1/chat/completions"
+HERMES_API_TIMEOUT = config.HERMES_API_TIMEOUT if hasattr(config, 'HERMES_API_TIMEOUT') else 600
+HERMES_STREAMING = config.HERMES_STREAMING if hasattr(config, 'HERMES_STREAMING') else True
+
+@app.route("/chat/settings", methods=["GET", "POST"])
+@login_required
+def chat_settings():
+    config_path = "/opt/hermes_webui/chat_config.json"
+    
+    if request.method == "POST":
+        import json
+        data = {
+            "api_url": request.form.get("api_url", ""),
+            "timeout": int(request.form.get("timeout", 600)),
+            "streaming": request.form.get("streaming") == "on"
+        }
+        with open(config_path, "w") as f:
+            json.dump(data, f)
+        flash("Settings saved!", "success")
+    
+    import json
+    defaults = {"api_url": "http://127.0.0.1:8642/v1/chat/completions", "timeout": 600, "streaming": True}
+    if os.path.exists(config_path):
+        with open(config_path, "r") as f:
+            settings = {**defaults, **json.load(f)}
+    else:
+        settings = defaults
+    
+    return render_template_string("""<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Chat Settings - Hermes</title>
+<style>
+""" + STYLE + """
+.settings-box { background: #1e293b; padding: 32px; border-radius: 12px; border: 1px solid #334155; max-width: 600px; margin: 20px auto; }
+.settings-box h2 { color: #f1f5f9; margin-bottom: 24px; }
+.form-group { margin-bottom: 20px; }
+.form-group label { display: block; margin-bottom: 8px; color: #94a3b8; font-weight: 500; }
+.form-group input { width: 100%; padding: 12px; border-radius: 6px; border: 1px solid #334155; background: #0f172a; color: #e2e8f0; font-size: 15px; }
+.form-group input:focus { outline: none; border-color: #3b82f6; }
+.form-group .hint { font-size: 12px; color: #64748b; margin-top: 4px; }
+.checkbox-group { display: flex; align-items: center; gap: 10px; }
+.checkbox-group input { width: auto; }
+.checkbox-group label { margin: 0; }
+.btn { padding: 12px 24px; border-radius: 6px; border: none; background: #3b82f6; color: white; font-size: 15px; cursor: pointer; }
+.btn:hover { background: #2563eb; }
+</style>
+</head>
+<body>
+""" + SIDEBAR + """
+<div class="main">
+    <h1>Chat Settings</h1>
+    <div class="settings-box">
+        {% with messages = get_flashed_messages(with_categories=true) %}
+            {% if messages %}
+                {% for category, message in messages %}<div class="flash flash-{{ category }}">{{ message }}</div>{% endfor %}
+            {% endif %}
+        {% endwith %}
+        <form method="POST">
+            <div class="form-group">
+                <label>API URL</label>
+                <input type="text" name="api_url" value=""" + settings['api_url'] + """ required>
+                <div class="hint">OpenAI-compatible API endpoint</div>
+            </div>
+            <div class="form-group">
+                <label>Timeout (seconds)</label>
+                <input type="number" name="timeout" value=""" + str(settings['timeout']) + """ min="60" max="3600">
+                <div class="hint">Max wait time for response (60-3600 seconds)</div>
+            </div>
+            <div class="form-group checkbox-group">
+                <input type="checkbox" name="streaming" """ + ("checked" if settings['streaming'] else "") + """ id="streaming">
+                <label for="streaming">Enable Streaming</label>
+                <div class="hint" style="margin-left: auto;">Show response as it generates</div>
+            </div>
+            <button type="submit" class="btn">Save Settings</button>
+        </form>
+    </div>
+</div>
+</body>
+</html>
+""", active_page='')
+
+@app.route("/chat")
+@app.route("/chat/<session_id>")
+@login_required
+def chat(session_id=None):
+    import requests
+    
+    if not session_id:
+        conn = get_chat_db_connection()
+        cursor = conn.cursor()
+        cursor.execute("SELECT id, COALESCE(title, id) as name FROM chat_sessions ORDER BY created_at DESC LIMIT 10")
+        sessions = [{"id": row[0], "name": row[1]} for row in cursor.fetchall()]
+        conn.close()
+        
+        return render_template_string("""<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Chat - Hermes</title>
+<style>
+""" + STYLE + """
+.chat-container { display: flex; height: calc(100vh - 120px); gap: 20px; }
+.chat-sidebar { width: 250px; background: #1e293b; border-radius: 8px; padding: 16px; border: 1px solid #334155; overflow-y: auto; }
+.chat-sidebar h3 { color: #f1f5f9; font-size: 16px; margin-bottom: 16px; }
+.session-item { padding: 10px 12px; border-radius: 6px; margin-bottom: 8px; }
+.session-item:hover { background: #334155; }
+.session-item a { color: #e2e8f0; text-decoration: none; display: block; }
+.chat-main { flex: 1; background: #1e293b; border-radius: 8px; border: 1px solid #334155; display: flex; flex-direction: column; }
+.chat-messages { flex: 1; overflow-y: auto; padding: 16px; }
+.message { margin-bottom: 16px; padding: 12px 16px; border-radius: 12px; max-width: 80%; }
+.message.user { background: #3b82f6; margin-left: auto; border-bottom-right-radius: 4px; }
+.message.assistant { background: #334155; border-bottom-left-radius: 4px; }
+.message .role { font-size: 12px; color: #94a3b8; margin-bottom: 4px; }
+.message .content { color: #e2e8f0; line-height: 1.5; white-space: pre-wrap; }
+.chat-input { padding: 16px; border-top: 1px solid #334155; display: flex; gap: 12px; }
+.chat-input input { flex: 1; padding: 12px; border-radius: 8px; border: 1px solid #334155; background: #0f172a; color: #e2e8f0; font-size: 15px; }
+.chat-input input:focus { outline: none; border-color: #3b82f6; }
+.chat-input button { padding: 12px 24px; border-radius: 8px; border: none; background: #3b82f6; color: white; font-size: 15px; cursor: pointer; }
+.chat-input button:hover { background: #2563eb; }
+.chat-input button:disabled { background: #475569; cursor: not-allowed; }
+.new-chat-btn { display: block; width: 100%; padding: 12px; border-radius: 6px; border: 1px dashed #334155; background: none; color: #60a5fa; cursor: pointer; margin-bottom: 16px; text-align: center; }
+.new-chat-btn:hover { background: #334155; }
+.empty-state { display: flex; align-items: center; justify-content: center; height: 100%; color: #64748b; }
+.chat-input { padding: 16px; border-top: 1px solid #334155; display: flex; gap: 12px; align-items: flex-end; }
+.chat-input .input-wrapper { flex: 1; }
+.chat-input textarea { width: 100%; padding: 12px; border-radius: 8px; border: 1px solid #334155; background: #0f172a; color: #e2e8f0; font-size: 15px; font-family: inherit; resize: none; min-height: 48px; max-height: 200px; line-height: 1.5; }
+.chat-input textarea:focus { outline: none; border-color: #3b82f6; }
+.chat-input button { padding: 12px 24px; border-radius: 8px; border: none; background: #3b82f6; color: white; font-size: 15px; cursor: pointer; }
+.chat-input button:hover { background: #2563eb; }
+.chat-input button:disabled { background: #475569; cursor: not-allowed; }
+.new-chat-btn { display: block; width: 100%; padding: 12px; border-radius: 6px; border: 1px dashed #334155; background: none; color: #60a5fa; cursor: pointer; margin-bottom: 16px; text-align: center; }
+.new-chat-btn:hover { background: #334155; }
+.thinking { color: #64748b; font-style: italic; }
+.markdown-body { line-height: 1.5; }
+</style>
+</head>
+<body>
+""" + SIDEBAR + """
+<div class="main">
+    <h1>Chat</h1>
+    <div class="chat-container">
+        <div class="chat-sidebar">
+            <button class="new-chat-btn" onclick="newChat()">+ New Chat</button>
+            <h3>Sessions</h3>
+            {% for s in sessions %}
+            <div class="session-item">
+                <a href="{{ url_for('chat', session_id=s.id) }}">{{ s.name[:20] }}</a>
+            </div>
+            {% endfor %}
+        </div>
+        <div class="chat-main">
+            <div class="empty-state">Select a session or start new chat</div>
+        </div>
+    </div>
+</div>
+<script>
+function newChat() {
+    fetch('/chat/new', { method: 'POST' })
+        .then(r => r.json())
+        .then(d => {
+            if (d.session_id) window.location.href = '/chat/' + d.session_id;
+        });
+}
+</script>
+</body>
+</html>
+""", sessions=sessions, active_page='chat')
+    
+    conn = get_chat_db_connection()
+    cursor = conn.cursor()
+    from html import escape
+    cursor.execute("SELECT COALESCE(title, id) FROM chat_sessions WHERE id = ?", (session_id,))
+    session_name = cursor.fetchone()
+    session_name = escape(session_name[0]) if session_name else "New Session"
+    
+    cursor.execute("SELECT role, content FROM chat_messages WHERE session_id = ? AND content IS NOT NULL ORDER BY timestamp", (session_id,))
+    messages = [{"role": row[0], "content": row[1]} for row in cursor.fetchall()]
+    conn.close()
+    
+    return render_template_string("""<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Chat - Hermes</title>
+<script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+<style>
+""" + STYLE + """
+.chat-container { display: flex; height: calc(100vh - 120px); gap: 20px; }
+.chat-sidebar { width: 250px; background: #1e293b; border-radius: 8px; padding: 16px; border: 1px solid #334155; overflow-y: auto; }
+.chat-sidebar h3 { color: #f1f5f9; font-size: 16px; margin-bottom: 16px; }
+.session-item { padding: 10px 12px; border-radius: 6px; margin-bottom: 8px; }
+.session-item:hover { background: #334155; }
+.session-item a { color: #e2e8f0; text-decoration: none; display: block; }
+.chat-main { flex: 1; background: #1e293b; border-radius: 8px; border: 1px solid #334155; display: flex; flex-direction: column; }
+.chat-header { padding: 16px; border-bottom: 1px solid #334155; }
+.chat-header h2 { color: #f1f5f9; font-size: 18px; margin: 0; }
+.chat-header input:focus { outline: 1px solid #3b82f6; padding: 4px 8px; border-radius: 4px; }
+.chat-messages { flex: 1; overflow-y: auto; padding: 16px; }
+.message { margin-bottom: 16px; padding: 12px 16px; border-radius: 12px; max-width: 80%; }
+.message.user { background: #3b82f6; margin-left: auto; border-bottom-right-radius: 4px; }
+.message.assistant { background: #334155; border-bottom-left-radius: 4px; }
+.message .role { font-size: 12px; color: #94a3b8; margin-bottom: 4px; }
+.message .content { color: #e2e8f0; line-height: 1.5; white-space: pre-wrap; }
+.chat-input { padding: 16px; border-top: 1px solid #334155; display: flex; gap: 12px; align-items: flex-end; }
+.chat-input .input-wrapper { flex: 1; }
+.chat-input textarea { width: 100%; padding: 12px; border-radius: 8px; border: 1px solid #334155; background: #0f172a; color: #e2e8f0; font-size: 15px; font-family: inherit; resize: none; min-height: 48px; max-height: 200px; line-height: 1.5; }
+.chat-input textarea:focus { outline: none; border-color: #3b82f6; }
+.chat-input button { padding: 12px 24px; border-radius: 8px; border: none; background: #3b82f6; color: white; font-size: 15px; cursor: pointer; }
+.chat-input button:hover { background: #2563eb; }
+.chat-input button:disabled { background: #475569; cursor: not-allowed; }
+.new-chat-btn { display: block; width: 100%; padding: 12px; border-radius: 6px; border: 1px dashed #334155; background: none; color: #60a5fa; cursor: pointer; margin-bottom: 16px; text-align: center; }
+.new-chat-btn:hover { background: #334155; }
+.thinking { color: #64748b; font-style: italic; }
+.markdown-body { line-height: 1.5; }
+.markdown-body h1, .markdown-body h2, .markdown-body h3 { color: #f1f5f9; margin: 12px 0 6px 0; }
+.markdown-body h1 { font-size: 1.4em; border-bottom: 1px solid #334155; padding-bottom: 6px; }
+.markdown-body h2 { font-size: 1.2em; }
+.markdown-body h3 { font-size: 1.1em; }
+.markdown-body p { margin: 6px 0; }
+.markdown-body ul, .markdown-body ol { margin: 6px 0; padding-left: 20px; }
+.markdown-body li { margin: 2px 0; }
+.markdown-body code { background: #0f172a; padding: 2px 5px; border-radius: 3px; font-family: monospace; font-size: 0.9em; color: #fb923c; }
+.markdown-body pre { background: #0f172a; padding: 10px; border-radius: 6px; overflow-x: auto; margin: 8px 0; position: relative; }
+.markdown-body pre code { background: none; padding: 0; color: #e2e8f0; }
+.markdown-body pre .copy-btn { position: absolute; top: 6px; right: 6px; background: #334155; border: none; color: #94a3b8; padding: 4px 8px; border-radius: 3px; cursor: pointer; font-size: 11px; }
+.markdown-body pre .copy-btn:hover { background: #3b82f6; color: white; }
+.markdown-body blockquote { border-left: 3px solid #3b82f6; padding-left: 10px; color: #94a3b8; margin: 6px 0; }
+.markdown-body table { border-collapse: collapse; width: 100%; margin: 8px 0; font-size: 13px; }
+.markdown-body th, .markdown-body td { border: 1px solid #475569; padding: 6px 10px; text-align: left; }
+.markdown-body th { background: #1e3a5f; color: #60a5fa; font-weight: 600; }
+.markdown-body td { background: #0f172a; }
+.markdown-body tr:hover td { background: #1e293b; }
+.markdown-body a { color: #60a5fa; text-decoration: none; }
+.markdown-body a:hover { text-decoration: underline; }
+.markdown-body strong { color: #f1f5f9; }
+.markdown-body em { color: #94a3b8; }
+.markdown-body hr { border: none; border-top: 1px solid #334155; margin: 12px 0; }
+.markdown-body img { max-width: 100%; border-radius: 6px; margin: 8px 0; }
+.file-preview { display: flex; align-items: center; gap: 8px; background: #334155; padding: 8px 12px; border-radius: 6px; margin-top: 8px; font-size: 13px; color: #e2e8f0; }
+.remove-file-btn { background: none; border: none; color: #f87171; cursor: pointer; font-size: 18px; padding: 0 4px; }
+.remove-file-btn:hover { color: #ef4444; }
+.attach-btn { background: #334155; border: none; color: #e2e8f0; padding: 12px 16px; border-radius: 8px; cursor: pointer; font-size: 18px; }
+.attach-btn:hover { background: #475569; }
+.chat-input { display: flex; gap: 8px; align-items: flex-end; }
+</style>
+</head>
+<body>
+""" + SIDEBAR + """
+<div class="main">
+    <h1>Chat</h1>
+    <div class="chat-container">
+        <div class="chat-sidebar">
+            <button class="new-chat-btn" onclick="newChat()">+ New Chat</button>
+            <h3>Sessions</h3>
+            <div class="session-item"><a href="{{ url_for('chat') }}">← Back</a></div>
+        </div>
+        <div class="chat-main">
+            <div class="chat-header">
+                <div style="display:flex;align-items:center;gap:12px;flex:1;">
+                    <input type="text" id="chatTitle" value="{{ session_name[:30]|safe }}" 
+                        style="background:none;border:none;color:#f1f5f9;font-size:18px;font-weight:600;flex:1;"
+                        onchange='renameChat({{ session_id|tojson }}, this.value)'>
+                    <button onclick='deleteChat({{ session_id|tojson }})' 
+                        style="background:#dc2626;border:none;color:white;padding:6px 12px;border-radius:4px;cursor:pointer;font-size:13px;">
+                        Delete
+                    </button>
+                </div>
+            </div>
+            <div class="chat-messages" id="messages">
+                {% for msg in messages %}
+                <div class="message {{ msg.role }}">
+                    <div class="role">{{ msg.role }}</div>
+                    <div class="content{% if msg.role == 'assistant' %} markdown-body markdown-render{% endif %}">{{ msg.content }}</div>
+                </div>
+                {% endfor %}
+            </div>
+            <div class="chat-input">
+                <div class="input-wrapper">
+                    <textarea id="userInput" placeholder="Type your message... (Shift+Enter for new line)" autocomplete="off"></textarea>
+                    <div id="filePreview" class="file-preview" style="display:none;">
+                        <span id="fileName"></span>
+                        <button onclick="removeFile()" class="remove-file-btn">×</button>
+                    </div>
+                </div>
+                <input type="file" id="fileInput" style="display:none;" onchange="handleFileSelect(event)">
+                <button class="attach-btn" onclick="document.getElementById('fileInput').click()" title="Attach file">📎</button>
+                <button id="sendBtn" onclick="sendMessage()">Send</button>
+            </div>
+        </div>
+    </div>
+</div>
+<script>
+var sessionId = {{ session_id|tojson }};
+var messages = {{ messages|tojson }};
+
+document.getElementById('userInput').addEventListener('keydown', function(e) {
+    if (e.key === 'Enter' && !e.shiftKey) {
+        e.preventDefault();
+        sendMessage();
+    }
+});
+document.getElementById('userInput').addEventListener('input', function() {
+    this.style.height = 'auto';
+    this.style.height = (this.scrollHeight) + 'px';
+});
+
+function scrollToBottom() {
+    var msgs = document.getElementById('messages');
+    msgs.scrollTop = msgs.scrollHeight;
+}
+
+function escapeHtml(text) {
+    var div = document.createElement('div');
+    div.textContent = text;
+    return div.innerHTML;
+}
+
+function renderMessage(role, content) {
+    var container = document.getElementById('messages');
+    var div = document.createElement('div');
+    div.className = 'message ' + role;
+    
+    if (role === 'assistant' && typeof marked !== 'undefined') {
+        var rendered = marked.parse(content);
+        div.innerHTML = '<div class="role">' + role + '</div><div class="content markdown-body markdown-render">' + rendered + '</div>';
+        container.appendChild(div);
+        addCopyButtons(div);
+    } else {
+        div.innerHTML = '<div class="role">' + role + '</div><div class="content">' + escapeHtml(content) + '</div>';
+        container.appendChild(div);
+    }
+    scrollToBottom();
+}
+
+function addCopyButtons(container) {
+    container.querySelectorAll('pre').forEach(function(pre) {
+        if (pre.querySelector('.copy-btn')) return;
+        var code = pre.querySelector('code');
+        var text = code ? code.textContent : pre.textContent;
+        var btn = document.createElement('button');
+        btn.className = 'copy-btn';
+        btn.textContent = 'Copy';
+        btn.onclick = function() {
+            navigator.clipboard.writeText(text);
+            btn.textContent = 'Copied!';
+            setTimeout(function() { btn.textContent = 'Copy'; }, 2000);
+        };
+        pre.style.position = 'relative';
+        pre.appendChild(btn);
+    });
+}
+
+var attachedFile = null;
+var attachedFileContent = null;
+
+function handleFileSelect(event) {
+    var file = event.target.files[0];
+    if (file) {
+        attachedFile = file;
+        var reader = new FileReader();
+        reader.onload = function(e) {
+            attachedFileContent = e.target.result;
+            document.getElementById('filePreview').style.display = 'flex';
+            document.getElementById('fileName').textContent = file.name + ' (' + formatFileSize(file.size) + ')';
+        };
+        reader.readAsText(file);
+    }
+}
+
+function removeFile() {
+    attachedFile = null;
+    attachedFileContent = null;
+    document.getElementById('filePreview').style.display = 'none';
+    document.getElementById('fileInput').value = '';
+}
+
+function formatFileSize(bytes) {
+    if (bytes < 1024) return bytes + ' B';
+    if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
+    return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
+}
+
+async function sendMessage() {
+    var input = document.getElementById('userInput');
+    var btn = document.getElementById('sendBtn');
+    var message = input.value.trim();
+    
+    if (!message && !attachedFile) return;
+    if (btn.disabled) return;
+    
+    btn.disabled = true;
+    input.disabled = true;
+    
+    var displayMessage = message;
+    var fullMessage = message;
+    
+    if (attachedFile) {
+        var fileExt = attachedFile.name.split('.').pop();
+        displayMessage = (message ? message + String.fromCharCode(10, 10) : '') + '📎 ' + attachedFile.name;
+        fullMessage = (message ? message + String.fromCharCode(10, 10) : '') + '[Attached file: ' + attachedFile.name + String.fromCharCode(10, 10) + '```' + fileExt + String.fromCharCode(10) + attachedFileContent + String.fromCharCode(10) + '```]';
+        removeFile();
+    }
+    
+    input.value = '';
+    renderMessage('user', displayMessage);
+    
+    var thinking = document.createElement('div');
+    thinking.className = 'message assistant';
+    thinking.id = 'thinking';
+    thinking.innerHTML = '<div class="role">assistant</div><div class="content thinking">Thinking...</div>';
+    var messagesDiv = document.getElementById('messages');
+    messagesDiv.appendChild(thinking);
+    scrollToBottom();
+    
+    try {
+        var response = await fetch('/chat/send', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({session_id: sessionId, message: fullMessage})
+        });
+        
+        var contentType = response.headers.get('content-type') || '';
+        if (contentType.indexOf('event-stream') >= 0) {
+            var thinkingEl = document.getElementById('thinking');
+            if (thinkingEl) thinkingEl.remove();
+            
+            var assistantDiv = document.createElement('div');
+            assistantDiv.className = 'message assistant';
+            assistantDiv.innerHTML = '<div class="role">assistant</div><div class="content markdown-body markdown-render" id="assistant-content"></div>';
+            messagesDiv.appendChild(assistantDiv);
+            var contentDiv = document.getElementById('assistant-content');
+            contentDiv.textContent = '';
+            scrollToBottom();
+            
+            var reader = response.body.getReader();
+            var decoder = new TextDecoder();
+            var fullContent = '';
+            var buffer = '';
+            
+            while (true) {
+                var {done, value} = await reader.read();
+                if (done) break;
+                buffer += decoder.decode(value, {stream: true});
+                var parts = buffer.split(String.fromCharCode(10));
+                buffer = parts.pop();
+                for (var part of parts) {
+                    if (part.indexOf('data: ') === 0) {
+                        try {
+                            var jsonStr = part.substring(6);
+                            if (jsonStr) {
+                                var data = JSON.parse(jsonStr);
+                                if (data.content) {
+                                    fullContent += data.content;
+                                    contentDiv.textContent = fullContent;
+                                    if (typeof marked !== 'undefined') {
+                                        contentDiv.innerHTML = marked.parse(fullContent);
+                                        addCopyButtons(assistantDiv);
+                                    }
+                                    scrollToBottom();
+                                }
+                            }
+                        } catch (e) {}
+                    }
+                }
+            }
+        } else {
+            var data = await response.json();
+            var thinkingEl = document.getElementById('thinking');
+            if (thinkingEl) thinkingEl.remove();
+            
+            if (data.error) {
+                renderMessage('assistant', 'Error: ' + data.error);
+            } else {
+                renderMessage('assistant', data.response);
+            }
+        }
+    } catch (e) {
+        console.error('Chat error:', e);
+        var thinkingEl = document.getElementById('thinking');
+        if (thinkingEl) thinkingEl.remove();
+        renderMessage('assistant', 'Error: ' + e.message + '. Check browser console for details.');
+    }
+    
+    btn.disabled = false;
+    input.disabled = false;
+    input.focus();
+}
+
+function renameChat(sessionId, title) {
+    fetch('/chat/rename/' + sessionId, {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({title: title})
+    });
+}
+
+function deleteChat(sessionId) {
+    if (confirm('Delete this chat?')) {
+        fetch('/chat/delete/' + sessionId, { method: 'POST' })
+            .then(r => r.json())
+            .then(d => {
+                window.location.href = '/chat';
+            });
+    }
+}
+
+scrollToBottom();
+
+// Render markdown for assistant messages
+document.querySelectorAll('.markdown-render').forEach(function(el) {
+    if (typeof marked !== 'undefined') {
+        el.innerHTML = marked.parse(el.textContent);
+    }
+});
+// Add copy buttons
+document.querySelectorAll('.markdown-body').forEach(function(el) {
+    el.querySelectorAll('pre').forEach(function(pre) {
+        if (pre.querySelector('.copy-btn')) return;
+        var code = pre.querySelector('code');
+        var text = code ? code.textContent : pre.textContent;
+        var btn = document.createElement('button');
+        btn.className = 'copy-btn';
+        btn.textContent = 'Copy';
+        btn.onclick = function() {
+            navigator.clipboard.writeText(text);
+            btn.textContent = 'Copied!';
+            setTimeout(function() { btn.textContent = 'Copy'; }, 2000);
+        };
+        pre.style.position = 'relative';
+        pre.appendChild(btn);
+    });
+});
+</script>
+</body>
+</html>
+""", session_id=session_id, session_name=session_name, messages=messages, active_page='chat', messages_json=messages)
+
+@app.route("/chat/new", methods=["POST"])
+@login_required
+def chat_new():
+    import uuid
+    import time
+    conn = get_chat_db_connection()
+    cursor = conn.cursor()
+    session_id = str(uuid.uuid4())
+    cursor.execute("INSERT INTO chat_sessions (id, title, created_at) VALUES (?, ?, ?)", (session_id, f"New Chat", time.time()))
+    conn.commit()
+    conn.close()
+    return json.dumps({"session_id": session_id})
+
+@app.route("/chat/delete/<session_id>", methods=["POST"])
+@login_required
+def chat_delete(session_id):
+    conn = get_chat_db_connection()
+    cursor = conn.cursor()
+    cursor.execute("DELETE FROM chat_messages WHERE session_id = ?", (session_id,))
+    cursor.execute("DELETE FROM chat_sessions WHERE id = ?", (session_id,))
+    conn.commit()
+    conn.close()
+    return json.dumps({"success": True})
+
+@app.route("/chat/rename/<session_id>", methods=["POST"])
+@login_required
+def chat_rename(session_id):
+    import time
+    data = request.get_json()
+    title = data.get("title", "Untitled")
+    conn = get_chat_db_connection()
+    cursor = conn.cursor()
+    cursor.execute("UPDATE chat_sessions SET title = ? WHERE id = ?", (title, session_id))
+    conn.commit()
+    conn.close()
+    return json.dumps({"success": True})
+
+@app.route("/chat/send", methods=["POST"])
+@login_required
+def chat_send():
+    import requests
+    import time
+    import json
+    
+    config_path = "/opt/hermes_webui/chat_config.json"
+    defaults = {"api_url": "http://127.0.0.1:8642/v1/chat/completions", "timeout": 600, "streaming": True}
+    if os.path.exists(config_path):
+        with open(config_path, "r") as f:
+            settings = {**defaults, **json.load(f)}
+    else:
+        settings = defaults
+    
+    data = request.get_json()
+    message = data.get("message", "")
+    session_id = data.get("session_id", "")
+    
+    conn = get_chat_db_connection()
+    cursor = conn.cursor()
+    
+    # Ensure session exists
+    cursor.execute("SELECT id FROM chat_sessions WHERE id = ?", (session_id,))
+    if not cursor.fetchone():
+        cursor.execute("INSERT INTO chat_sessions (id, title, created_at) VALUES (?, ?, ?)", (session_id, f"Chat", time.time()))
+        conn.commit()
+    
+    cursor.execute("SELECT role, content FROM chat_messages WHERE session_id = ? ORDER BY timestamp", (session_id,))
+    history = [{"role": row[0], "content": row[1]} for row in cursor.fetchall()]
+    conn.close()
+    
+    messages = history + [{"role": "user", "content": message}]
+    
+    api_url = settings.get("api_url", HERMES_API_URL)
+    timeout = settings.get("timeout", HERMES_API_TIMEOUT)
+    streaming = settings.get("streaming", HERMES_STREAMING)
+    
+    try:
+        if streaming:
+            resp = requests.post(
+                api_url,
+                json={"model": "hermes-agent", "messages": messages, "stream": True},
+                stream=True,
+                timeout=timeout
+            )
+            
+            if resp.status_code == 200:
+                # Save display message (without file content) to database
+                import re
+                display_msg = re.sub(r'\[Attached file: [^\]]+\]', lambda m: m.group(0).split('```')[0].strip() + ']', message) if '[Attached file:' in message else message
+                
+                conn = get_chat_db_connection()
+                cursor = conn.cursor()
+                cursor.execute("INSERT INTO chat_messages (session_id, role, content, timestamp) VALUES (?, ?, ?, ?)", (session_id, "user", display_msg, time.time()))
+                conn.commit()
+                conn.close()
+                
+                print("STREAM: Collecting full response", flush=True)
+                full_response = ""
+                try:
+                    for chunk in resp.iter_lines(decode_unicode=True):
+                        if chunk:
+                            line = chunk.strip()
+                            if line.startswith('data: '):
+                                data_str = line[6:]
+                                if data_str.strip() == '[DONE]':
+                                    print("STREAM: Received [DONE]", flush=True)
+                                    break
+                                try:
+                                    chunk_data = json.loads(data_str)
+                                    content = chunk_data.get('choices', [{}])[0].get('delta', {}).get('content', '')
+                                    if content:
+                                        full_response += content
+                                except json.JSONDecodeError:
+                                    pass
+                except Exception as e:
+                    print(f"STREAM: Error: {e}", flush=True)
+                
+                print(f"STREAM: Got {len(full_response)} chars", flush=True)
+                
+                # Save response BEFORE returning to client
+                if full_response:
+                    try:
+                        conn2 = get_chat_db_connection()
+                        cursor2 = conn2.cursor()
+                        cursor2.execute("INSERT INTO chat_messages (session_id, role, content, timestamp) VALUES (?, ?, ?, ?)", 
+                                       (session_id, "assistant", full_response, time.time()))
+                        conn2.commit()
+                        conn2.close()
+                        print("STREAM: Saved to DB", flush=True)
+                    except Exception as e:
+                        print(f"STREAM: DB error: {e}", flush=True)
+                
+                return json.dumps({"response": full_response})
+            else:
+                return json.dumps({"error": f"API Error: {resp.status_code} - {resp.text[:200]}"}), 500
+        else:
+            resp = requests.post(
+                api_url,
+                json={"model": "hermes-agent", "messages": messages, "stream": False},
+                timeout=timeout
+            )
+            if resp.status_code == 200:
+                result = resp.json()
+                response = result["choices"][0]["message"]["content"]
+                
+                # Save display message (without file content) to database
+                import re
+                display_msg = re.sub(r'\[Attached file: [^\]]+\]', lambda m: m.group(0).split('```')[0].strip() + ']', message) if '[Attached file:' in message else message
+                
+                conn = get_chat_db_connection()
+                cursor = conn.cursor()
+                cursor.execute("INSERT INTO chat_messages (session_id, role, content, timestamp) VALUES (?, ?, ?, ?)", (session_id, "user", display_msg, time.time()))
+                cursor.execute("INSERT INTO chat_messages (session_id, role, content, timestamp) VALUES (?, ?, ?, ?)", (session_id, "assistant", response, time.time()))
+                conn.commit()
+                conn.close()
+                
+                return json.dumps({"response": response})
+            else:
+                return json.dumps({"error": f"API Error: {resp.status_code}"}), 500
+    except Exception as e:
+        return json.dumps({"error": str(e)}), 500
 
 @app.route("/login", methods=["GET", "POST"])
 def login():
