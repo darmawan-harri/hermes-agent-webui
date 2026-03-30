@@ -8,18 +8,23 @@ Flask-based web UI untuk mengeksplorasi folder-folder di `/root/.hermes/` dan be
 - **Dark Mode UI** - Tampilan modern dengan tema gelap
 - **Menu Sections:**
   - Cron Jobs - Lihat jadwal cron jobs
-  - List Skill - Eksplorasi skills
-  - Scripts - Eksplorasi scripts
-  - Memories - Eksplorasi memories
-  - Image Cache - Thumbnail preview gambar
-  - Browser Screenshots - Preview screenshot
-  - Sessions - Table view dengan View/Delete
-  - SOUL.md - Tampilkan file persona agent
-  - config.yaml - Konfigurasi dengan syntax highlighting
-  - state.db - Database viewer seperti phpMyAdmin
+  - File Explorer (Dropdown):
+    - Browse - File explorer dengan tree view
+    - Skills - Eksplorasi skills
+    - Scripts - Eksplorasi scripts
+    - Memories - Eksplorasi memories
+    - Image Cache - Thumbnail preview gambar
+    - Browser Screenshots - Preview screenshot
+    - Sessions - Table view dengan View/Delete
   - Chat - Chat dengan Hermes Agent via OpenAI API
-  - Chat Settings - Konfigurasi API URL, timeout, streaming
-  - Change Password - Ganti password
+  - Configuration (Dropdown):
+    - Chat Settings - Konfigurasi API URL, timeout, streaming
+    - SOUL.md - Tampilkan file persona agent
+    - state.db - Database viewer seperti phpMyAdmin
+    - config.yaml - Konfigurasi dengan syntax highlighting
+    - Change Password - Ganti password
+- **Login Page** - Modern login dengan logo Hermes
+- **Sidebar** - Dengan logo dan dropdown menus
 
 ## Chat Features
 

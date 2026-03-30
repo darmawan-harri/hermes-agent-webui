@@ -8,7 +8,7 @@ from werkzeug.security import generate_password_hash, check_password_hash
 
 import config
 
-app = Flask(__name__)
+app = Flask(__name__, static_folder='static')
 app.config['SECRET_KEY'] = secrets.token_hex(32)
 app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///users.db'
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
@@ -77,6 +77,8 @@ def get_file_list(path, base_path):
     return items
 
 def read_file_content(file_path):
+    from html import escape
+    import re
     ext = os.path.splitext(file_path)[1].lower()
     pretty_types = ['.json', '.jsonl', '.py', '.yaml', '.yml', '.md']
     
@@ -85,7 +87,10 @@ def read_file_content(file_path):
             if ext == '.json':
                 with open(file_path, 'r') as f:
                     data = json.load(f)
-                return json.dumps(data, indent=2), 'code'
+                content = json.dumps(data, indent=2)
+                content = escape(content)
+                content = content.replace('</script>', '<\\/script>')
+                return content, 'code'
             elif ext == '.jsonl':
                 lines = []
                 with open(file_path, 'r') as f:
@@ -96,12 +101,16 @@ def read_file_content(file_path):
                                 lines.append(json.loads(line))
                             except:
                                 lines.append(line)
-                return json.dumps(lines, indent=2), 'code'
+                content = json.dumps(lines, indent=2)
+                content = escape(content)
+                content = content.replace('</script>', '<\\/script>')
+                return content, 'code'
             elif ext in ['.yaml', '.yml']:
                 import yaml
                 with open(file_path, 'r') as f:
                     data = yaml.safe_load(f)
-                return yaml.dump(data, default_flow_style=False), 'code'
+                content = yaml.dump(data, default_flow_style=False)
+                return escape(content), 'code'
             elif ext == '.md':
                 import markdown
                 with open(file_path, 'r') as f:
@@ -110,12 +119,12 @@ def read_file_content(file_path):
                 return html, 'markdown'
             elif ext == '.py':
                 with open(file_path, 'r') as f:
-                    return f.read(), 'code'
+                    return escape(f.read()), 'code'
         else:
             with open(file_path, 'r') as f:
-                return f.read(), 'text'
+                return escape(f.read()), 'text'
     except Exception as e:
-        return str(e), 'error'
+        return escape(str(e)), 'error'
     return '', 'text'
 
 STYLE = """
@@ -127,9 +136,16 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-
 .menu-item { padding: 14px 20px; color: #94a3b8; text-decoration: none; display: block; transition: 0.2s; font-size: 15px; }
 .menu-item:hover { background: #334155; color: white; }
 .menu-item.active { background: #3b82f6; color: white; }
+.menu-dropdown { position: relative; display: block; }
+.menu-dropdown-toggle::after { content: '▸'; float: right; margin-right: 10px; }
+.menu-dropdown:hover > .menu-dropdown-content { display: block; }
+.menu-dropdown-content { display: none; position: absolute; left: 100%; top: 0; background: #1e293b; min-width: 200px; box-shadow: 0 8px 16px rgba(0,0,0,0.4); border-radius: 0 8px 8px 0; border: 1px solid #334155; z-index: 1000; }
+.menu-dropdown-content .menu-item { padding: 12px 20px; }
+.menu-dropdown:hover .menu-dropdown-content { display: block; }
+.menu-dropdown:hover .menu-dropdown-toggle { background: #334155; color: white; }
 .menu-logout { margin-top: auto; border-top: 1px solid #334155; padding-top: 10px; }
-.main { flex: 1; padding: 24px; overflow: auto; }
-.container { max-width: 1000px; }
+.main { flex: 1; padding: 24px; overflow: auto; width: 100%; box-sizing: border-box; }
+.container { max-width: 1400px; width: 100%; }
 h1 { color: #f1f5f9; margin-bottom: 20px; font-size: 28px; }
 .updated { color: #64748b; font-size: 15px; margin-bottom: 20px; }
 .job { background: #1e293b; border-radius: 8px; padding: 24px; margin-bottom: 16px; border: 1px solid #334155; }
@@ -269,20 +285,31 @@ def highlight_syntax(content, ext):
 
 SIDEBAR = """
 <div class="sidebar">
-    <div class="sidebar-logo"><h2>Hermes</h2></div>
+    <div class="sidebar-logo"><img src="/static/hermes_logo.png" alt="Hermes" style="width:40px;height:40px;border-radius:50%;vertical-align:middle;margin-right:10px;"> <span style="font-size:20px;font-weight:bold;">Hermes</span></div>
     <a href="/" class="menu-item {{ 'active' if active_page == 'jobs' else '' }}">Cron Jobs</a>
-    <a href="{{ url_for('skills') }}" class="menu-item {{ 'active' if active_page == 'skills' else '' }}">List Skill</a>
-    <a href="{{ url_for('scripts') }}" class="menu-item {{ 'active' if active_page == 'scripts' else '' }}">Scripts</a>
-    <a href="{{ url_for('memories') }}" class="menu-item {{ 'active' if active_page == 'memories' else '' }}">Memories</a>
-    <a href="{{ url_for('image_cache') }}" class="menu-item {{ 'active' if active_page == 'image_cache' else '' }}">Image Cache</a>
-    <a href="{{ url_for('browser_screenshots') }}" class="menu-item {{ 'active' if active_page == 'browser_screenshots' else '' }}">Browser Screenshots</a>
-    <a href="{{ url_for('sessions') }}" class="menu-item {{ 'active' if active_page == 'sessions' else '' }}">Sessions</a>
-    <a href="{{ url_for('soul') }}" class="menu-item {{ 'active' if active_page == 'soul' else '' }}">SOUL.md</a>
-    <a href="{{ url_for('state_db') }}" class="menu-item {{ 'active' if active_page == 'state_db' else '' }}">state.db</a>
+    <div class="menu-dropdown">
+        <a href="#" class="menu-item menu-dropdown-toggle {{ 'active' if active_page in ['file_explorer', 'skills', 'scripts', 'memories', 'image_cache', 'browser_screenshots', 'sessions'] else '' }}">File Explorer ▾</a>
+        <div class="menu-dropdown-content">
+            <a href="{{ url_for('file_explorer') }}" class="menu-item {{ 'active' if active_page == 'file_explorer' else '' }}">📁 Browse</a>
+            <a href="{{ url_for('skills') }}" class="menu-item {{ 'active' if active_page == 'skills' else '' }}">🧠 Skills</a>
+            <a href="{{ url_for('scripts') }}" class="menu-item {{ 'active' if active_page == 'scripts' else '' }}">📜 Scripts</a>
+            <a href="{{ url_for('memories') }}" class="menu-item {{ 'active' if active_page == 'memories' else '' }}">💾 Memories</a>
+            <a href="{{ url_for('image_cache') }}" class="menu-item {{ 'active' if active_page == 'image_cache' else '' }}">🖼️ Image Cache</a>
+            <a href="{{ url_for('browser_screenshots') }}" class="menu-item {{ 'active' if active_page == 'browser_screenshots' else '' }}">📸 Browser Screenshots</a>
+            <a href="{{ url_for('sessions') }}" class="menu-item {{ 'active' if active_page == 'sessions' else '' }}">💬 Sessions</a>
+        </div>
+    </div>
     <a href="{{ url_for('chat') }}" class="menu-item {{ 'active' if active_page == 'chat' else '' }}">Chat</a>
-    <a href="{{ url_for('chat_settings') }}" class="menu-item">Chat Settings</a>
-    <a href="{{ url_for('settings') }}" class="menu-item {{ 'active' if active_page == 'settings' else '' }}">config.yaml</a>
-    <a href="{{ url_for('change_password') }}" class="menu-item">Change Password</a>
+    <div class="menu-dropdown">
+        <a href="#" class="menu-item menu-dropdown-toggle {{ 'active' if active_page in ['soul', 'state_db', 'chat_settings', 'settings', 'change_password'] else '' }}">Configuration ▾</a>
+        <div class="menu-dropdown-content">
+            <a href="{{ url_for('chat_settings') }}" class="menu-item">⚙️ Chat Settings</a>
+            <a href="{{ url_for('soul') }}" class="menu-item {{ 'active' if active_page == 'soul' else '' }}">📄 SOUL.md</a>
+            <a href="{{ url_for('state_db') }}" class="menu-item {{ 'active' if active_page == 'state_db' else '' }}">🗃️ state.db</a>
+            <a href="{{ url_for('settings') }}" class="menu-item {{ 'active' if active_page == 'settings' else '' }}">⚙️ config.yaml</a>
+            <a href="{{ url_for('change_password') }}" class="menu-item">🔑 Change Password</a>
+        </div>
+    </div>
     <a href="{{ url_for('logout') }}" class="menu-item menu-logout">Logout</a>
 </div>
 """
@@ -333,6 +360,351 @@ INDEX_HTML = """<!DOCTYPE html>
         {% endfor %}
     </div>
 </div>
+</body>
+</html>
+"""
+
+FILE_EXPLORER_HTML = """<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>File Explorer - Hermes</title>
+<style>
+""" + STYLE + """
+.file-explorer-container { display: flex; gap: 24px; height: calc(100vh - 140px); width: 100%; box-sizing: border-box; }
+.file-tree { width: 280px; min-width: 280px; background: #1e293b; border-radius: 12px; border: 1px solid #334155; overflow: auto; display: flex; flex-direction: column; }
+.file-tree-header { padding: 16px; border-bottom: 1px solid #334155; }
+.file-tree-header input { width: 100%; padding: 12px 16px; border-radius: 8px; border: 1px solid #334155; background: #0f172a; color: #e2e8f0; font-size: 14px; }
+.file-tree-header input:focus { outline: none; border-color: #3b82f6; box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.2); }
+.tree-content { padding: 12px; flex: 1; overflow: auto; }
+.tree-node { margin: 1px 0; user-select: none; }
+.tree-row { display: flex; align-items: center; padding: 8px 12px; border-radius: 6px; cursor: pointer; }
+.tree-row:hover { background: #334155; }
+.tree-row.active { background: #1e3a5f; }
+.tree-toggle { width: 20px; height: 20px; display: flex; align-items: center; justify-content: center; color: #64748b; font-size: 10px; margin-right: 4px; transition: transform 0.15s; }
+.tree-toggle.expanded { transform: rotate(90deg); }
+.tree-toggle.empty { visibility: hidden; }
+.tree-icon { margin-right: 8px; font-size: 16px; }
+.tree-name { color: #e2e8f0; font-size: 14px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tree-children { margin-left: 16px; border-left: 1px solid #334155; padding-left: 8px; display: none; }
+.tree-children.expanded { display: block; }
+.search-results { padding: 16px; display: none; flex: 1; overflow: auto; }
+.search-results.active { display: block; }
+.search-result-item { padding: 14px 16px; border-radius: 8px; cursor: pointer; margin-bottom: 8px; background: #0f172a; border: 1px solid #334155; }
+.search-result-item:hover { background: #334155; border-color: #475569; }
+.search-result-name { color: #e2e8f0; font-size: 14px; font-weight: 500; }
+.search-result-path { font-size: 12px; color: #64748b; margin-top: 6px; }
+.search-result-type { font-size: 11px; padding: 3px 8px; border-radius: 4px; margin-left: 10px; }
+.search-result-filename { background: #1e3a5f; color: #60a5fa; }
+.search-result-content { background: #14532d; color: #4ade80; }
+.file-content-area { flex: 1; background: #1e293b; border-radius: 12px; border: 1px solid #334155; overflow: auto; display: flex; flex-direction: column; }
+.file-content-header { padding: 20px; border-bottom: 1px solid #334155; display: flex; justify-content: space-between; align-items: center; background: #1e293b; }
+.file-content-title { font-size: 18px; font-weight: 600; color: #f1f5f9; }
+.file-content-meta { font-size: 13px; color: #64748b; margin-top: 4px; }
+.file-content-body { flex: 1; overflow: auto; }
+.explorer-table-wrap { background: #1e293b; border-radius: 8px; border: 1px solid #334155; }
+.explorer-table { width: 100%; border-collapse: collapse; }
+.explorer-table th, .explorer-table td { padding: 12px 16px; text-align: left; border-bottom: 1px solid #334155; }
+.explorer-table th { background: #334155; color: #f1f5f9; font-weight: 600; font-size: 13px; }
+.explorer-table td { background: #1e293b; }
+.explorer-table tr:hover td { background: #334155; }
+.explorer-table td a { color: #e2e8f0; text-decoration: none; }
+.explorer-table td a:hover { color: #60a5fa; }
+.file-icon { margin-right: 8px; }
+.file-name-cell { display: flex; align-items: center; }
+.file-size, .file-date { color: #94a3b8; font-size: 13px; white-space: nowrap; }
+.no-results { color: #64748b; text-align: center; padding: 60px 20px; font-size: 15px; }
+.breadcrumb { background: #0f172a; padding: 12px 20px; border-radius: 8px; margin-bottom: 20px; font-size: 14px; }
+.breadcrumb a { color: #60a5fa; text-decoration: none; }
+.breadcrumb a:hover { text-decoration: underline; }
+/* Image Modal */
+.image-modal { display: none; position: fixed; z-index: 1000; left: 0; top: 0; width: 100%; height: 100%; background-color: rgba(0,0,0,0.9); }
+.image-modal-content { margin: auto; display: block; max-width: 90%; max-height: 85vh; margin-top: 3%; border-radius: 8px; }
+.image-modal-close { position: absolute; top: 20px; right: 40px; color: #f1f1f1; font-size: 40px; font-weight: bold; cursor: pointer; z-index: 1001; }
+.image-modal-close:hover { color: #3b82f6; }
+.image-modal-info { position: absolute; bottom: 20px; left: 50%; transform: translateX(-50%); color: #f1f1f1; font-size: 14px; background: rgba(0,0,0,0.7); padding: 10px 20px; border-radius: 8px; }
+.view-toggle { padding: 8px 16px; border-radius: 6px; border: 1px solid #334155; background: #334155; color: #e2e8f0; cursor: pointer; font-size: 13px; }
+.view-toggle:hover { background: #475569; }
+.view-toggle.active { background: #3b82f6; border-color: #3b82f6; }
+</style>
+</head>
+<body>
+""" + SIDEBAR + """
+<div class="main">
+    <h1>File Explorer</h1>
+    <div class="file-explorer-container">
+        <div class="file-tree">
+            <div class="file-tree-header">
+                <input type="text" id="searchInput" placeholder="Search files... (min 2 chars)" oninput="searchFiles()">
+            </div>
+            <div id="searchResults" class="search-results"></div>
+            <div id="treeContent" class="tree-content">
+                {% macro render_tree(nodes, depth=0) %}
+                    {% for node in nodes %}
+                    <div class="tree-node" data-path="{{ node.path }}">
+                        <div class="tree-row{% if current_path.startswith(node.path) %} active{% endif %}" onclick="toggleTreeNode(this)">
+                            <span class="tree-toggle{% if not node.children %} empty{% endif %}{% if current_path.startswith(node.path) %} expanded{% endif %}">▶</span>
+                            <span class="tree-icon">{% if current_path.startswith(node.path) %}📂{% else %}📁{% endif %}</span>
+                            <a class="tree-name" href="{{ url_for('file_explorer', path=node.path) }}" onclick="event.stopPropagation()">{{ node.name }}</a>
+                        </div>
+                        {% if node.children %}
+                        <div class="tree-children{% if current_path.startswith(node.path) %} expanded{% endif %}" id="tree-{{ node.path | replace('/', '-') | replace('.', '-') }}">
+                            {{ render_tree(node.children, depth + 1) }}
+                        </div>
+                        {% endif %}
+                    </div>
+                    {% endfor %}
+                {% endmacro %}
+                {{ render_tree(tree) }}
+            </div>
+        </div>
+        <div class="file-content-area">
+            {% if file_content is not none %}
+            <div class="file-content-header">
+                <div>
+                    <div class="file-content-title">{{ file_name }}</div>
+                    <div class="file-content-meta">{{ current_path }}</div>
+                </div>
+                <div>
+                    {% if is_json %}
+                    <button class="view-toggle" id="viewToggle" data-action="toggle">View as Table</button>
+                    {% endif %}
+                </div>
+            </div>
+            <div class="file-content-body">
+                <div id="code-view" style="padding: 20px;">
+                    {% if is_markdown %}
+                    <div class="markdown-content">{{ file_content|safe }}</div>
+                    {% else %}
+                    <pre style="margin:0; white-space: pre-wrap; word-wrap: break-word; font-family: 'Consolas', 'Monaco', monospace; font-size: 14px; line-height: 1.6; color: #e2e8f0;">{{ file_content|safe }}</pre>
+                    {% endif %}
+                </div>
+                <div id="table-view" class="table-view" style="display:none; padding: 20px;">
+                    {% if is_json and json_table %}
+                    {{ json_table|safe }}
+                    {% elif is_json %}
+                    <div style="color: #64748b; text-align: center; padding: 40px;">No data to display</div>
+                    {% endif %}
+                </div>
+            </div>
+            {% else %}
+            <div class="file-content-body" style="padding: 20px;">
+                <div class="breadcrumb">
+                    <a href="{{ url_for('file_explorer') }}">🏠 hermes</a>{% if current_path %}{% for p in current_path.split('/') %} / <a href="{{ url_for('file_explorer', path=current_path.split('/')[:loop.index]|join('/')) }}">{{ p }}</a>{% endfor %}{% endif %}
+                </div>
+                {% if items %}
+                <div class="explorer-table-wrap">
+                    <table class="explorer-table">
+                        <thead>
+                            <tr>
+                                <th>Name</th>
+                                <th>Size</th>
+                                <th>Date</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% if parent_path %}
+                            <tr>
+                                <td colspan="3"><a href="{{ url_for('file_explorer', path=parent_path) }}" style="color: #94a3b8;">📁 ..</a></td>
+                            </tr>
+                            {% endif %}
+                            {% for item in items %}
+                            <tr>
+                                <td>
+                                    <div class="file-name-cell">
+                                        {% if item.is_dir %}
+                                        <span class="file-icon">📁</span>
+                                        <a href="{{ url_for('file_explorer', path=item.path) }}">{{ item.name }}</a>
+                                        {% elif item.name.lower().endswith(('.jpg', '.jpeg', '.png', '.gif', '.webp', '.svg')) %}
+                                        <span class="file-icon">🖼️</span>
+                                        <a class="img-link" href="{{ url_for('serve_image', path=item.path) }}">{{ item.name }}</a>
+                                        {% else %}
+                                        <span class="file-icon">📄</span>
+                                        <a href="{{ url_for('file_explorer', path=item.path) }}">{{ item.name }}</a>
+                                        {% endif %}
+                                    </div>
+                                </td>
+                                <td class="file-size">{{ item.size }}</td>
+                                <td class="file-date">{{ item.date }}</td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+                {% else %}
+                <div class="no-results">📁 Empty directory</div>
+                {% endif %}
+            </div>
+            {% endif %}
+        </div>
+    </div>
+</div>
+<script>
+var searchTimeout;
+
+function toggleTreeNode(row) {
+    var node = row.parentElement;
+    var children = node.querySelector('.tree-children');
+    var toggle = row.querySelector('.tree-toggle');
+    var icon = row.querySelector('.tree-icon');
+    
+    if (children) {
+        children.classList.toggle('expanded');
+        toggle.classList.toggle('expanded');
+        icon.textContent = children.classList.contains('expanded') ? '📂' : '📁';
+    }
+}
+
+function searchFiles() {
+    var query = document.getElementById('searchInput').value;
+    clearTimeout(searchTimeout);
+    
+    if (query.length < 2) {
+        document.getElementById('searchResults').classList.remove('active');
+        document.getElementById('treeContent').style.display = 'block';
+        return;
+    }
+    
+    searchTimeout = setTimeout(function() {
+        fetch('/api/search?q=' + encodeURIComponent(query))
+            .then(function(r) { return r.json(); })
+            .then(function(data) {
+                var results = document.getElementById('searchResults');
+                var tree = document.getElementById('treeContent');
+                
+                if (data.results.length > 0) {
+                    var html = '<div style="margin-bottom: 16px; color: #64748b; font-size: 14px;">' + data.results.length + ' results for "' + data.query + '"</div>';
+                    data.results.forEach(function(item) {
+                        var typeClass = item.type === 'filename' ? 'search-result-filename' : 'search-result-content';
+                        var typeLabel = item.type === 'filename' ? 'name' : 'content';
+                        if (item.line) typeLabel = typeLabel + ':' + item.line;
+                        var icon = item.is_dir ? '📁' : '📄';
+                        var url = '/file_explorer/' + item.path;
+                        html += '<div class="search-result-item search-link" data-url="' + url + '">';
+                        html += '<div class="search-result-name">' + icon + ' ' + item.name;
+                        html += '<span class="search-result-type ' + typeClass + '">' + typeLabel + '</span></div>';
+                        html += '<div class="search-result-path">' + item.path + ' (' + item.size + ')</div></div>';
+                    });
+                    results.innerHTML = html;
+                    results.classList.add('active');
+                    tree.style.display = 'none';
+                } else {
+                    results.innerHTML = '<div class="no-results">No results found for "' + data.query + '"</div>';
+                    results.classList.add('active');
+                    tree.style.display = 'none';
+                }
+            });
+    }, 300);
+}
+
+function toggleView() {
+    var codeView = document.getElementById('code-view');
+    var tableView = document.getElementById('table-view');
+    var btn = document.getElementById('viewToggle');
+    if (codeView && tableView && btn) {
+        if (codeView.style.display === 'none') {
+            codeView.style.display = 'block';
+            tableView.style.display = 'none';
+            btn.textContent = 'View as Table';
+            btn.classList.remove('active');
+        } else {
+            codeView.style.display = 'none';
+            tableView.style.display = 'block';
+            btn.textContent = 'View as Code';
+            btn.classList.add('active');
+        }
+    }
+}
+
+function toggleJson(id) {
+    var el = document.getElementById(id);
+    if (!el) return;
+    var toggle = el.previousElementSibling;
+    while (toggle && !toggle.classList.contains('json-toggle')) {
+        toggle = toggle.previousElementSibling;
+    }
+    if (el.style.display === 'none') {
+        el.style.display = 'block';
+        if (toggle) toggle.textContent = '▼';
+    } else {
+        el.style.display = 'none';
+        if (toggle) toggle.textContent = '▶';
+    }
+}
+
+document.addEventListener('click', function(e) {
+    if (e.target.classList.contains('json-toggle')) {
+        var targetId = e.target.getAttribute('data-target');
+        if (targetId) {
+            toggleJson(targetId);
+        }
+    }
+    if (e.target.classList.contains('view-toggle') || e.target.getAttribute('data-action') === 'toggle') {
+        toggleView();
+    }
+    // Handle search result clicks
+    var link = e.target.closest('.search-link');
+    if (link) {
+        var url = link.getAttribute('data-url');
+        if (url) {
+            window.location.href = url;
+        }
+    }
+});
+
+// Image Modal functions
+function openImageModal(src, name, size) {
+    var modal = document.getElementById('imageModal');
+    var img = document.getElementById('modalImg');
+    var info = document.getElementById('modalInfo');
+    if (modal && img && info) {
+        img.src = src;
+        info.innerHTML = name + ' | ' + size;
+        modal.style.display = 'block';
+    }
+}
+
+function closeImageModal() {
+    var modal = document.getElementById('imageModal');
+    if (modal) {
+        modal.style.display = 'none';
+    }
+}
+
+// Close modal on Escape key
+document.addEventListener('keydown', function(e) {
+    if (e.key === 'Escape') {
+        closeImageModal();
+    }
+});
+</script>
+
+<div id="imgModal" style="display:none;position:fixed;z-index:9999;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.9);justify-content:center;align-items:center;">
+    <span id="imgModalClose" style="position:absolute;top:20px;right:40px;color:#fff;font-size:40px;cursor:pointer;z-index:10000;">&times;</span>
+    <img id="imgModalImg" style="max-width:90%;max-height:90vh;border-radius:8px;">
+</div>
+<script>
+document.querySelectorAll('.img-link').forEach(function(el) {
+    el.addEventListener('click', function(e) {
+        e.preventDefault();
+        document.getElementById('imgModal').style.display = 'flex';
+        document.getElementById('imgModalImg').src = this.href;
+    });
+});
+var imgModal = document.getElementById('imgModal');
+if (imgModal) {
+    imgModal.addEventListener('click', function() {
+        this.style.display = 'none';
+    });
+}
+var imgModalClose = document.getElementById('imgModalClose');
+if (imgModalClose) {
+    imgModalClose.addEventListener('click', function() {
+        document.getElementById('imgModal').style.display = 'none';
+    });
+}
+</script>
 </body>
 </html>
 """
@@ -442,7 +814,6 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-
 .menu-item:hover { background: #334155; color: white; }
 .menu-item.active { background: #3b82f6; color: white; }
 .menu-logout { margin-top: auto; border-top: 1px solid #334155; padding-top: 10px; }
-.main { flex: 1; padding: 24px; overflow: auto; }
 .file-list { list-style: none; display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
 .file-item { padding: 10px 12px; border-radius: 4px; }
 .file-item:hover { background: #334155; }
@@ -485,11 +856,9 @@ IMAGE_TABLE_HTML = """<!DOCTYPE html>
 .image-table tr:hover { background: #1e293b; }
 .image-table td a { color: #e2e8f0; text-decoration: none; }
 .image-table td a:hover { color: #60a5fa; }
-.image-thumb { width: 60px; height: 60px; object-fit: cover; border-radius: 4px; }
-.pagination { margin-top: 20px; display: flex; gap: 8px; justify-content: center; }
-.pagination a { padding: 8px 12px; background: #334155; color: #e2e8f0; text-decoration: none; border-radius: 4px; }
-.pagination a:hover { background: #3b82f6; }
-.pagination span { padding: 8px 12px; background: #3b82f6; color: white; border-radius: 4px; }
+.image-thumb { width: 60px; height: 60px; object-fit: cover; border-radius: 4px; cursor: pointer; }
+.delete-btn { padding: 6px 12px; border-radius: 4px; border: none; cursor: pointer; font-size: 13px; background: #dc2626; color: white; }
+.delete-btn:hover { background: #b91c1c; }
 .modal { display: none; position: fixed; z-index: 1000; left: 0; top: 0; width: 100%; height: 100%; background-color: rgba(0,0,0,0.9); }
 .modal-content { margin: auto; display: block; max-width: 90%; max-height: 90vh; margin-top: 2%; }
 .modal-close { position: absolute; top: 20px; right: 35px; color: #f1f1f1; font-size: 40px; font-weight: bold; cursor: pointer; }
@@ -512,6 +881,7 @@ IMAGE_TABLE_HTML = """<!DOCTYPE html>
                 <th>Name</th>
                 <th>Size</th>
                 <th>Date</th>
+                <th>Actions</th>
             </tr>
         </thead>
         <tbody>
@@ -531,6 +901,11 @@ IMAGE_TABLE_HTML = """<!DOCTYPE html>
             </td>
             <td>{{ item.size }}</td>
             <td>{{ item.date }}</td>
+            <td>
+                {% if not item.is_dir %}
+                <button class="delete-btn" onclick="deleteFile('{{ item.path }}', '{{ item.name }}')">Delete</button>
+                {% endif %}
+            </td>
         </tr>
         {% endfor %}
         </tbody>
@@ -545,6 +920,7 @@ IMAGE_TABLE_HTML = """<!DOCTYPE html>
 var modal = document.getElementById('imageModal');
 var modalImg = document.getElementById('modalImg');
 var modalInfo = document.getElementById('modalInfo');
+var activePage = '{{ active_page }}';
 function openModal(src, name, size, date) {
     modal.style.display = 'block';
     modalImg.src = src;
@@ -552,6 +928,18 @@ function openModal(src, name, size, date) {
 }
 function closeModal() {
     modal.style.display = 'none';
+}
+function deleteFile(path, name) {
+    if (confirm('Delete ' + name + '?')) {
+        var endpoint = activePage === 'image_cache' ? '/delete_image_cache/' : '/delete_browser_screenshots/';
+        fetch(endpoint + path, { method: 'POST' })
+            .then(r => r.json())
+            .then(d => {
+                if (d.success) location.reload();
+                else alert('Error: ' + d.error);
+            })
+            .catch(e => alert('Error: ' + e));
+    }
 }
 </script>
 </body>
@@ -735,12 +1123,30 @@ LOGIN_HTML = """<!DOCTYPE html>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Login - Hermes</title>
-<style>""" + STYLE + """</style>
+<style>""" + STYLE + """
+.login-page { display: flex !important; justify-content: center !important; align-items: center !important; min-height: 100vh !important; background: linear-gradient(135deg, #0f172a 0%, #1e293b 100%) !important; width: 100vw !important; margin: 0 !important; padding: 0 !important; position: fixed !important; top: 0 !important; left: 0 !important; }
+.login-box { background: #1e293b; padding: 40px; border-radius: 16px; border: 1px solid #334155; width: 400px; box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5); margin: auto; }
+.login-logo { text-align: center; margin-bottom: 30px; }
+.login-logo img { width: 120px; height: 120px; border-radius: 50%; object-fit: cover; box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3); }
+.login-box h2 { text-align: center; margin-bottom: 30px; font-size: 24px; color: #f1f5f9; }
+.form-group { margin-bottom: 20px; }
+.form-group label { display: block; margin-bottom: 8px; color: #94a3b8; font-size: 14px; }
+.form-group input { width: 100%; padding: 14px; border-radius: 8px; border: 1px solid #334155; background: #0f172a; color: #e2e8f0; font-size: 15px; box-sizing: border-box; }
+.form-group input:focus { outline: none; border-color: #3b82f6; box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.2); }
+.btn { width: 100%; padding: 14px; border-radius: 8px; border: none; background: #3b82f6; color: white; font-size: 16px; font-weight: 600; cursor: pointer; transition: 0.2s; }
+.btn:hover { background: #2563eb; transform: translateY(-1px); }
+.flash { padding: 12px; border-radius: 8px; margin-bottom: 20px; font-size: 14px; }
+.flash-error { background: #450a0a; color: #f87171; border: 1px solid #7f1d1d; }
+.flash-success { background: #14532d; color: #4ade80; border: 1px solid #166534; }
+</style>
 </head>
 <body>
 <div class="login-page">
     <div class="login-box">
-        <h2>Hermes Login</h2>
+        <div class="login-logo">
+            <img src="/static/hermes_logo.png" alt="Hermes Logo">
+        </div>
+        <h2>Welcome to Hermes</h2>
         {% with messages = get_flashed_messages(with_categories=true) %}
             {% if messages %}
                 {% for category, message in messages %}<div class="flash flash-{{ category }}">{{ message }}</div>{% endfor %}
@@ -775,12 +1181,14 @@ def json_to_table(data, prefix="", expanded=False):
             count = len(v) if isinstance(v, dict) else 0
             uid = f"obj_{secrets.token_hex(8)}"
             content = json_to_table(v, prefix, expanded)
-            return f"<span class='json-toggle' onclick=\"toggleJson('{uid}')\">▶</span> <span class='json-object'>Object [{count} keys]</span><div id='{uid}' class='json-collapsed' style='display:{"none" if not expanded else "block"};margin-left:20px;margin-top:8px;'>{content}</div>"
+            display_style = "none" if not expanded else "block"
+            return f"<span class='json-toggle' data-target='{uid}'>▶</span> <span class='json-object'>Object [{count} keys]</span><div id='{uid}' class='json-collapsed' style='display:{display_style};margin-left:20px;margin-top:8px;'>{content}</div>"
         elif t == 'array':
             count = len(v) if isinstance(v, list) else 0
             uid = f"arr_{secrets.token_hex(8)}"
             content = json_to_table(v, prefix, expanded)
-            return f"<span class='json-toggle' onclick=\"toggleJson('{uid}')\">▶</span> <span class='json-array'>Array [{count} items]</span><div id='{uid}' class='json-collapsed' style='display:{"none" if not expanded else "block"};margin-left:20px;margin-top:8px;'>{content}</div>"
+            display_style = "none" if not expanded else "block"
+            return f"<span class='json-toggle' data-target='{uid}'>▶</span> <span class='json-array'>Array [{count} items]</span><div id='{uid}' class='json-collapsed' style='display:{display_style};margin-left:20px;margin-top:8px;'>{content}</div>"
         elif t == 'string':
             return f"<span class='json-string'>\"{escape(str(v))}\"</span>"
         elif t == 'number':
@@ -832,6 +1240,184 @@ def json_to_table(data, prefix="", expanded=False):
 def index():
     data = load_jobs()
     return render_template_string(INDEX_HTML, jobs=data.get("jobs", []), updated_at=data.get("updated_at", "Unknown"), active_page='jobs')
+
+@app.route("/file_explorer")
+@app.route("/file_explorer/<path:path>")
+@login_required
+def file_explorer(path=""):
+    import json as json_mod
+    
+    full_path = os.path.join(config.ROOT_HERMES_FOLDER, path)
+    
+    # Get directory tree for sidebar
+    def get_tree(root_path, max_depth=3, current_depth=0):
+        tree = []
+        if current_depth >= max_depth:
+            return tree
+        try:
+            for item in sorted(os.listdir(root_path)):
+                item_path = os.path.join(root_path, item)
+                if os.path.isdir(item_path):
+                    rel_path = os.path.relpath(item_path, config.ROOT_HERMES_FOLDER)
+                    tree.append({
+                        'name': item,
+                        'path': rel_path,
+                        'children': get_tree(item_path, max_depth, current_depth + 1)
+                    })
+        except:
+            pass
+        return tree
+    
+    tree = get_tree(config.ROOT_HERMES_FOLDER)
+    
+    # Get current directory contents
+    items = []
+    parent_path = ""
+    if path:
+        parent_path = '/'.join(path.split('/')[:-1])
+    
+    if os.path.exists(full_path) and os.path.isdir(full_path):
+        items = get_file_list(full_path, config.ROOT_HERMES_FOLDER)
+    
+    # Check if it's a file to view
+    file_content = None
+    file_name = ""
+    file_type = ""
+    is_json = False
+    is_markdown = False
+    json_table = ""
+    
+    if os.path.exists(full_path) and os.path.isfile(full_path):
+        file_content, file_type = read_file_content(full_path)
+        file_name = os.path.basename(path)
+        ext = os.path.splitext(full_path)[1].lower()
+        is_json = ext in ['.json', '.jsonl']
+        is_markdown = ext == '.md'
+        
+        if is_json:
+            try:
+                if ext == '.json':
+                    with open(full_path, 'r') as f:
+                        json_data = json_mod.load(f)
+                else:
+                    json_data = []
+                    with open(full_path, 'r') as f:
+                        for line in f:
+                            line = line.strip()
+                            if line:
+                                try:
+                                    json_data.append(json_mod.loads(line))
+                                except:
+                                    pass
+                json_table = json_to_table(json_data)
+            except:
+                is_json = False
+        
+        if file_type == 'code' and not is_json:
+            file_content = highlight_syntax(file_content, ext)
+        
+        # Get directory listing for parent
+        current_dir = os.path.dirname(path)
+        if current_dir:
+            items = get_file_list(os.path.join(config.ROOT_HERMES_FOLDER, current_dir), config.ROOT_HERMES_FOLDER)
+            parent_path = '/'.join(current_dir.split('/')[:-1]) if current_dir else ""
+    
+    return render_template_string(FILE_EXPLORER_HTML,
+        tree=tree,
+        items=items,
+        current_path=path,
+        parent_path=parent_path,
+        file_content=file_content,
+        file_name=file_name,
+        file_type=file_type,
+        is_json=is_json,
+        is_markdown=is_markdown,
+        json_table=json_table,
+        active_page='file_explorer')
+
+@app.route("/api/search")
+@login_required
+def search_files():
+    query = request.args.get('q', '').lower()
+    if not query or len(query) < 2:
+        return json.dumps({"results": []})
+    
+    results = []
+    max_results = 50
+    
+    def search_dir(dir_path, relative_path=""):
+        nonlocal results
+        if len(results) >= max_results:
+            return
+        try:
+            for item in os.listdir(dir_path):
+                if len(results) >= max_results:
+                    return
+                item_path = os.path.join(dir_path, item)
+                rel_path = os.path.join(relative_path, item) if relative_path else item
+                
+                # Search in filename
+                if query in item.lower():
+                    is_dir = os.path.isdir(item_path)
+                    size = "-"
+                    if not is_dir:
+                        try:
+                            stat = os.stat(item_path)
+                            size = format_size(stat.st_size)
+                        except:
+                            pass
+                    results.append({
+                        'name': item,
+                        'path': rel_path,
+                        'is_dir': is_dir,
+                        'size': size,
+                        'type': 'filename'
+                    })
+                
+                # Search in file content (only for text files)
+                if os.path.isfile(item_path):
+                    ext = os.path.splitext(item_path)[1].lower()
+                    if ext in ['.txt', '.md', '.py', '.json', '.yaml', '.yml', '.js', '.html', '.css', '.sh', '.sql']:
+                        try:
+                            with open(item_path, 'r', encoding='utf-8', errors='ignore') as f:
+                                content = f.read()
+                                if query in content.lower():
+                                    # Find line number
+                                    lines = content.split('\n')
+                                    line_num = 0
+                                    for i, line in enumerate(lines):
+                                        if query in line.lower():
+                                            line_num = i + 1
+                                            break
+                                    # Add if not already added by filename
+                                    if not any(r['path'] == rel_path for r in results):
+                                        results.append({
+                                            'name': item,
+                                            'path': rel_path,
+                                            'is_dir': False,
+                                            'size': format_size(os.path.getsize(item_path)),
+                                            'type': 'content',
+                                            'line': line_num
+                                        })
+                        except:
+                            pass
+                
+                # Recurse into directories
+                if os.path.isdir(item_path) and not item.startswith('.'):
+                    search_dir(item_path, rel_path)
+        except:
+            pass
+    
+    search_dir(config.ROOT_HERMES_FOLDER)
+    return json.dumps({"results": results, "query": query})
+
+def format_size(bytes):
+    if bytes < 1024:
+        return f"{bytes} B"
+    elif bytes < 1024 * 1024:
+        return f"{bytes / 1024:.1f} KB"
+    else:
+        return f"{bytes / (1024 * 1024):.1f} MB"
 
 def explorer(path, folder, active):
     full_path = os.path.join(folder, path)
@@ -959,6 +1545,9 @@ def serve_image(path):
         # Try browser_screenshots
         full_path = os.path.join(BROWSER_SCREENSHOTS_FOLDER, path)
     if not os.path.exists(full_path):
+        # Try root hermes folder (for file_explorer)
+        full_path = os.path.join(config.ROOT_HERMES_FOLDER, path)
+    if not os.path.exists(full_path):
         return "File not found", 404
     
     ext = os.path.splitext(full_path)[1].lower()
@@ -1047,6 +1636,32 @@ def delete_file(path):
         return '{"success": true}'
     except Exception as e:
         return '{"error": "' + str(e) + '"}', 500
+
+@app.route("/delete_image_cache/<path:path>", methods=["POST"])
+@login_required
+def delete_image_cache(path):
+    full_path = os.path.join(IMAGE_CACHE_FOLDER, path)
+    if not os.path.exists(full_path) or os.path.isdir(full_path):
+        return '{"error": "File not found"}', 404
+    
+    try:
+        os.remove(full_path)
+        return '{"success": true}'
+    except Exception as e:
+        return json.dumps({"error": str(e)}), 500
+
+@app.route("/delete_browser_screenshots/<path:path>", methods=["POST"])
+@login_required
+def delete_browser_screenshots(path):
+    full_path = os.path.join(BROWSER_SCREENSHOTS_FOLDER, path)
+    if not os.path.exists(full_path) or os.path.isdir(full_path):
+        return '{"error": "File not found"}', 404
+    
+    try:
+        os.remove(full_path)
+        return '{"success": true}'
+    except Exception as e:
+        return json.dumps({"error": str(e)}), 500
 
 @app.route("/view/<path:path>")
 @login_required
@@ -2168,4 +2783,4 @@ def setup():
 if __name__ == "__main__":
     with app.app_context():
         db.create_all()
-    app.run(host="127.0.0.1", port=5000)
+    app.run(host="0.0.0.0", port=5000)
