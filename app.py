@@ -300,6 +300,7 @@ SIDEBAR = """
         </div>
     </div>
     <a href="{{ url_for('chat') }}" class="menu-item {{ 'active' if active_page == 'chat' else '' }}">Chat</a>
+    <a href="{{ url_for('chatv2') }}" class="menu-item {{ 'active' if active_page == 'chatv2' else '' }}">ChatV2</a>
     <div class="menu-dropdown">
         <a href="#" class="menu-item menu-dropdown-toggle {{ 'active' if active_page in ['soul', 'state_db', 'chat_settings', 'settings', 'change_password'] else '' }}">Configuration ▾</a>
         <div class="menu-dropdown-content">
@@ -2681,6 +2682,387 @@ def chat_send():
                 return json.dumps({"error": f"API Error: {resp.status_code}"}), 500
     except Exception as e:
         return json.dumps({"error": str(e)}), 500
+
+@app.route("/chatv2")
+@app.route("/chatv2/<session_id>")
+@login_required
+def chatv2(session_id=None):
+    import requests
+    import json
+    
+    if not session_id:
+        conn = get_chat_db_connection()
+        cursor = conn.cursor()
+        cursor.execute("SELECT id, COALESCE(title, id) as name FROM chat_sessions ORDER BY created_at DESC LIMIT 20")
+        sessions = [{"id": row[0], "name": row[1]} for row in cursor.fetchall()]
+        conn.close()
+        
+        return render_template_string("""<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Chat - Hermes</title>
+<script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+<style>
+""" + STYLE + """
+.v2-container { display: flex; height: calc(100vh - 40px); }
+.v2-left { width: 260px; background: #202123; border-right: 1px solid #2f2f2f; display: flex; flex-direction: column; }
+.v2-left-header { padding: 16px; border-bottom: 1px solid #2f2f2f; }
+.v2-new-chat { width: 100%; padding: 12px; background: #343541; border: 1px solid #565863; border-radius: 100px; color: #ececf1; font-size: 14px; cursor: pointer; text-align: left; display: flex; align-items: center; gap: 8px; transition: 0.2s; }
+.v2-new-chat:hover { background: #2f2f2f; }
+.v2-history { flex: 1; overflow-y: auto; padding: 12px; }
+.v2-history-title { font-size: 12px; color: #8e8ea0; font-weight: 600; margin-bottom: 12px; padding: 0 8px; }
+.v2-history-item { padding: 12px 16px; border-radius: 8px; color: #ececf1; text-decoration: none; display: block; font-size: 14px; margin-bottom: 4px; cursor: pointer; }
+.v2-history-item:hover { background: #2f2f2f; }
+.v2-history-item a { color: inherit; text-decoration: none; display: block; }
+.v2-history-item.active { background: #343541; }
+.v2-history-item-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.v2-history-item-delete { float: right; opacity: 0; color: #f87171; font-size: 16px; line-height: 1; }
+.v2-history-item:hover .v2-history-item-delete { opacity: 1; }
+.v2-main { flex: 1; display: flex; flex-direction: column; background: #343541; }
+.v2-main-header { padding: 16px 24px; border-bottom: 1px solid #2f2f2f; display: flex; align-items: center; justify-content: space-between; }
+.v2-main-header h2 { color: #ececf1; font-size: 18px; font-weight: 600; }
+.v2-header-actions { display: flex; gap: 8px; }
+.v2-header-btn { padding: 8px 16px; background: #3b82f6; border: none; border-radius: 6px; color: white; font-size: 13px; cursor: pointer; }
+.v2-header-btn:hover { background: #2563eb; }
+.v2-header-btn.delete { background: #dc2626; }
+.v2-header-btn.delete:hover { background: #b91c1c; }
+.v2-messages { flex: 1; overflow-y: auto; padding: 24px; }
+.v2-message { display: flex; gap: 16px; padding: 24px 0; max-width: 768px; margin: 0 auto; width: 100%; }
+.v2-message-user { background: #5436da; padding: 12px 16px; border-radius: 12px; color: #ffffff; max-width: 80%; margin-left: auto; }
+.v2-message-assistant { background: #343541; }
+.v2-message-icon { width: 32px; height: 32px; border-radius: 4px; display: flex; align-items: center; justify-content: center; font-size: 18px; flex-shrink: 0; }
+.v2-message-user .v2-message-icon { background: #5436da; }
+.v2-message-assistant .v2-message-icon { background: #0d0d0d; color: #ececf1; }
+.v2-message-content { flex: 1; line-height: 1.6; }
+.v2-message-content p { margin: 8px 0; }
+.v2-message-content code { background: #202123; padding: 2px 5px; border-radius: 4px; font-family: monospace; }
+.v2-message-content pre { background: #202123; padding: 12px; border-radius: 8px; overflow-x: auto; margin: 8px 0; }
+.v2-message-content pre code { background: none; padding: 0; }
+.v2-message-content ul, .v2-message-content ol { margin: 8px 0; padding-left: 24px; }
+.v2-message-content table { border-collapse: collapse; width: 100%; margin: 8px 0; }
+.v2-message-content th, .v2-message-content td { border: 1px solid #565863; padding: 8px 12px; text-align: left; }
+.v2-message-content th { background: #202123; }
+.v2-empty { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; color: #8e8ea0; }
+.v2-empty h2 { color: #ececf1; font-size: 24px; font-weight: 600; margin-bottom: 8px; }
+.v2-empty p { font-size: 15px; }
+.v2-input-area { padding: 24px; max-width: 768px; margin: 0 auto; width: 100%; }
+.v2-input-wrapper { position: relative; }
+.v2-input { width: 100%; padding: 16px 20px; border-radius: 12px; border: 1px solid #2f2f2f; background: #40414f; color: #ececf1; font-size: 16px; font-family: inherit; resize: none; min-height: 56px; max-height: 200px; line-height: 1.5; }
+.v2-input:focus { outline: none; border-color: #3b82f6; }
+.v2-input::placeholder { color: #8e8ea0; }
+.v2-input-btn { position: absolute; right: 16px; bottom: 16px; padding: 8px 16px; background: #3b82f6; border: none; border-radius: 6px; color: white; font-size: 14px; cursor: pointer; }
+.v2-input-btn:hover { background: #2563eb; }
+.v2-input-btn:disabled { background: #565863; cursor: not-allowed; }
+.v2-thinking { color: #8e8ea0; font-style: italic; }
+.v2-message-content h1, .v2-message-content h2, .v2-message-content h3 { color: #ececf1; margin: 12px 0 6px 0; }
+.v2-message-content h1 { font-size: 1.4em; border-bottom: 1px solid #2f2f2f; padding-bottom: 6px; }
+.v2-message-content h2 { font-size: 1.2em; }
+.v2-message-content h3 { font-size: 1.1em; }
+.v2-message-content a { color: #60a5fa; text-decoration: none; }
+.v2-message-content a:hover { text-decoration: underline; }
+.v2-message-content blockquote { border-left: 3px solid #565863; padding-left: 12px; color: #8e8ea0; margin: 8px 0; }
+.v2-message-content hr { border: none; border-top: 1px solid #2f2f2f; margin: 12px 0; }
+.v2-message-content img { max-width: 100%; border-radius: 6px; margin: 8px 0; }
+</style>
+</head>
+<body>
+""" + SIDEBAR + """
+<div class="main" style="padding:0;display:flex;flex-direction:column;">
+    <div class="v2-container">
+        <div class="v2-left">
+            <div class="v2-left-header">
+                <button class="v2-new-chat" onclick="newChat()">
+                    <span style="font-size:20px;">+</span> New chat
+                </button>
+            </div>
+            <div class="v2-history">
+                <div class="v2-history-title">HISTORY</div>
+                {% for s in sessions %}
+                <div class="v2-history-item">
+                    <a href="/chatv2/{{ s.id }}"><span class="v2-history-item-name">{{ s.name[:25] }}</span></a>
+                </div>
+                {% endfor %}
+            </div>
+        </div>
+        <div class="v2-main">
+            <div class="v2-empty">
+                <h2>Hermes Chat</h2>
+                <p>Select a conversation or start a new chat</p>
+            </div>
+        </div>
+    </div>
+</div>
+<script>
+function newChat() {
+    fetch('/chat/new', { method: 'POST' })
+        .then(r => r.json())
+        .then(d => {
+            if (d.session_id) window.location.href = '/chatv2/' + d.session_id;
+        });
+}
+</script>
+</body>
+</html>
+""", sessions=sessions, active_page='chat')
+    
+    # Get sessions for sidebar in session view
+    conn = get_chat_db_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT id, COALESCE(title, id) as name FROM chat_sessions ORDER BY created_at DESC LIMIT 20")
+    sidebar_sessions = [{"id": row[0], "name": row[1]} for row in cursor.fetchall()]
+    
+    from html import escape
+    cursor.execute("SELECT COALESCE(title, id) FROM chat_sessions WHERE id = ?", (session_id,))
+    session_name = cursor.fetchone()
+    session_name = escape(session_name[0]) if session_name else "New Session"
+    
+    cursor.execute("SELECT role, content FROM chat_messages WHERE session_id = ? AND content IS NOT NULL ORDER BY timestamp", (session_id,))
+    messages = [{"role": row[0], "content": row[1]} for row in cursor.fetchall()]
+    conn.close()
+    
+    return render_template_string("""<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Chat - Hermes</title>
+<script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+<style>
+""" + STYLE + """
+.v2-container { display: flex; height: calc(100vh - 40px); }
+.v2-left { width: 260px; background: #202123; border-right: 1px solid #2f2f2f; display: flex; flex-direction: column; }
+.v2-left-header { padding: 16px; border-bottom: 1px solid #2f2f2f; }
+.v2-new-chat { width: 100%; padding: 12px; background: #343541; border: 1px solid #565863; border-radius: 100px; color: #ececf1; font-size: 14px; cursor: pointer; text-align: left; display: flex; align-items: center; gap: 8px; transition: 0.2s; }
+.v2-new-chat:hover { background: #2f2f2f; }
+.v2-history { flex: 1; overflow-y: auto; padding: 12px; }
+.v2-history-title { font-size: 12px; color: #8e8ea0; font-weight: 600; margin-bottom: 12px; padding: 0 8px; }
+.v2-history-item { padding: 12px 16px; border-radius: 8px; color: #ececf1; text-decoration: none; display: block; font-size: 14px; margin-bottom: 4px; cursor: pointer; }
+.v2-history-item:hover { background: #2f2f2f; }
+.v2-history-item a { color: inherit; text-decoration: none; display: block; }
+.v2-history-item.active { background: #343541; }
+.v2-history-item-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.v2-history-item-delete { float: right; opacity: 0; color: #f87171; font-size: 16px; line-height: 1; }
+.v2-history-item:hover .v2-history-item-delete { opacity: 1; }
+.v2-main { flex: 1; display: flex; flex-direction: column; background: #343541; }
+.v2-main-header { padding: 16px 24px; border-bottom: 1px solid #2f2f2f; display: flex; align-items: center; justify-content: space-between; }
+.v2-main-header h2 { color: #ececf1; font-size: 18px; font-weight: 600; }
+.v2-header-actions { display: flex; gap: 8px; }
+.v2-header-btn { padding: 8px 16px; background: #3b82f6; border: none; border-radius: 6px; color: white; font-size: 13px; cursor: pointer; }
+.v2-header-btn:hover { background: #2563eb; }
+.v2-header-btn.delete { background: #dc2626; }
+.v2-header-btn.delete:hover { background: #b91c1c; }
+.v2-messages { flex: 1; overflow-y: auto; padding: 24px; }
+.v2-message { display: flex; gap: 16px; padding: 24px 0; max-width: 768px; margin: 0 auto; width: 100%; }
+.v2-message-user { background: #5436da; padding: 12px 16px; border-radius: 12px; color: #ffffff; max-width: 80%; margin-left: auto; }
+.v2-message-assistant { background: #343541; }
+.v2-message-icon { width: 32px; height: 32px; border-radius: 4px; display: flex; align-items: center; justify-content: center; font-size: 18px; flex-shrink: 0; }
+.v2-message-user .v2-message-icon { background: #5436da; }
+.v2-message-assistant .v2-message-icon { background: #0d0d0d; color: #ececf1; }
+.v2-message-content { flex: 1; line-height: 1.6; }
+.v2-message-content p { margin: 8px 0; }
+.v2-message-content code { background: #202123; padding: 2px 5px; border-radius: 4px; font-family: monospace; }
+.v2-message-content pre { background: #202123; padding: 12px; border-radius: 8px; overflow-x: auto; margin: 8px 0; }
+.v2-message-content pre code { background: none; padding: 0; }
+.v2-message-content ul, .v2-message-content ol { margin: 8px 0; padding-left: 24px; }
+.v2-message-content table { border-collapse: collapse; width: 100%; margin: 8px 0; }
+.v2-message-content th, .v2-message-content td { border: 1px solid #565863; padding: 8px 12px; text-align: left; }
+.v2-message-content th { background: #202123; }
+.v2-empty { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; color: #8e8ea0; }
+.v2-empty h2 { color: #ececf1; font-size: 24px; font-weight: 600; margin-bottom: 8px; }
+.v2-empty p { font-size: 15px; }
+.v2-input-area { padding: 24px; max-width: 768px; margin: 0 auto; width: 100%; }
+.v2-input-wrapper { position: relative; }
+.v2-input { width: 100%; padding: 16px 20px; border-radius: 12px; border: 1px solid #2f2f2f; background: #40414f; color: #ececf1; font-size: 16px; font-family: inherit; resize: none; min-height: 56px; max-height: 200px; line-height: 1.5; }
+.v2-input:focus { outline: none; border-color: #3b82f6; }
+.v2-input::placeholder { color: #8e8ea0; }
+.v2-input-btn { position: absolute; right: 16px; bottom: 16px; padding: 8px 16px; background: #3b82f6; border: none; border-radius: 6px; color: white; font-size: 14px; cursor: pointer; }
+.v2-input-btn:hover { background: #2563eb; }
+.v2-input-btn:disabled { background: #565863; cursor: not-allowed; }
+.v2-thinking { color: #8e8ea0; font-style: italic; }
+.v2-message-content h1, .v2-message-content h2, .v2-message-content h3 { color: #ececf1; margin: 12px 0 6px 0; }
+.v2-message-content h1 { font-size: 1.4em; border-bottom: 1px solid #2f2f2f; padding-bottom: 6px; }
+.v2-message-content h2 { font-size: 1.2em; }
+.v2-message-content h3 { font-size: 1.1em; }
+.v2-message-content a { color: #60a5fa; text-decoration: none; }
+.v2-message-content a:hover { text-decoration: underline; }
+.v2-message-content blockquote { border-left: 3px solid #565863; padding-left: 12px; color: #8e8ea0; margin: 8px 0; }
+.v2-message-content hr { border: none; border-top: 1px solid #2f2f2f; margin: 12px 0; }
+.v2-message-content img { max-width: 100%; border-radius: 6px; margin: 8px 0; }
+</style>
+</head>
+<body>
+""" + SIDEBAR + """
+<div class="main" style="padding:0;display:flex;flex-direction:column;">
+    <div class="v2-container">
+        <div class="v2-left">
+            <div class="v2-left-header">
+                <button class="v2-new-chat" onclick="newChat()">
+                    <span style="font-size:20px;">+</span> New chat
+                </button>
+            </div>
+            <div class="v2-history">
+                <div class="v2-history-title">HISTORY</div>
+                {% for s in sidebar_sessions %}
+                <div class="v2-history-item">
+                    <a href="/chatv2/{{ s.id }}"><span class="v2-history-item-name">{{ s.name[:25] }}</span></a>
+                </div>
+                {% endfor %}
+            </div>
+        </div>
+        <div class="v2-main">
+            <div class="v2-main-header">
+                <h2>{{ session_name[:30]|safe }}</h2>
+                <div class="v2-header-actions">
+                    <button class="v2-header-btn" onclick="renameChat('{{ session_id }}')">Rename</button>
+                    <button class="v2-header-btn delete" onclick="deleteChat('{{ session_id }}')">Delete</button>
+                </div>
+            </div>
+            <div class="v2-messages" id="messages">
+                {% for msg in messages %}
+                <div class="v2-message v2-message-{{ msg.role }}">
+                    <div class="v2-message-icon">
+                        {% if msg.role == 'user' %}👤{% else %}🤖{% endif %}
+                    </div>
+                    <div class="v2-message-content{% if msg.role == 'assistant' %} markdown-body{% endif %}"{% if msg.role == 'assistant' %} data-markdown="{{ msg.content }}"{% endif %}>
+                        {% if msg.role == 'user' %}{{ msg.content }}{% endif %}
+                    </div>
+                </div>
+                {% endfor %}
+            </div>
+            <div class="v2-input-area">
+                <div class="v2-input-wrapper">
+                    <textarea id="userInput" class="v2-input" placeholder="Type your message..." autocomplete="off"></textarea>
+                    <button id="sendBtn" class="v2-input-btn" onclick="sendMessage()">Send</button>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+<script>
+var sessionId = '{{ session_id }}';
+
+document.getElementById('userInput').addEventListener('keydown', function(e) {
+    if (e.key === 'Enter' && !e.shiftKey) {
+        e.preventDefault();
+        sendMessage();
+    }
+});
+document.getElementById('userInput').addEventListener('input', function() {
+    this.style.height = 'auto';
+    this.style.height = (this.scrollHeight) + 'px';
+});
+
+function scrollToBottom() {
+    document.getElementById('messages').scrollTop = document.getElementById('messages').scrollHeight;
+}
+
+function escapeHtml(text) {
+    var div = document.createElement('div');
+    div.textContent = text;
+    return div.innerHTML;
+}
+
+function renderMessage(role, content) {
+    var container = document.getElementById('messages');
+    var div = document.createElement('div');
+    div.className = 'v2-message v2-message-' + role;
+    var icon = role === 'user' ? '👤' : '🤖';
+    if (role === 'assistant' && typeof marked !== 'undefined') {
+        div.innerHTML = '<div class="v2-message-icon">🤖</div><div class="v2-message-content markdown-body markdown-render">' + marked.parse(content) + '</div>';
+    } else {
+        div.innerHTML = '<div class="v2-message-icon">' + icon + '</div><div class="v2-message-content">' + escapeHtml(content) + '</div>';
+    }
+    container.appendChild(div);
+    scrollToBottom();
+}
+
+async function sendMessage() {
+    var input = document.getElementById('userInput');
+    var btn = document.getElementById('sendBtn');
+    var message = input.value.trim();
+    if (!message || btn.disabled) return;
+    
+    btn.disabled = true;
+    input.disabled = true;
+    input.value = '';
+    
+    renderMessage('user', message);
+    
+    var thinking = document.createElement('div');
+    thinking.className = 'v2-message v2-message-assistant';
+    thinking.id = 'thinking';
+    thinking.innerHTML = '<div class="v2-message-icon">🤖</div><div class="v2-message-content v2-thinking">Thinking...</div>';
+    document.getElementById('messages').appendChild(thinking);
+    scrollToBottom();
+    
+    try {
+        var response = await fetch('/chat/send', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({session_id: sessionId, message: message})
+        });
+        
+        var data = await response.json();
+        document.getElementById('thinking').remove();
+        
+        if (data.error) renderMessage('assistant', 'Error: ' + data.error);
+        else renderMessage('assistant', data.response);
+    } catch (e) {
+        console.error(e);
+        document.getElementById('thinking').remove();
+        renderMessage('assistant', 'Error: ' + e.message);
+    }
+    
+    btn.disabled = false;
+    input.disabled = false;
+    input.focus();
+}
+
+function renameChat(sessionId) {
+    var newTitle = prompt('Enter new title:');
+    if (newTitle) {
+        fetch('/chat/rename/' + sessionId, {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({title: newTitle})
+        }).then(r => r.json()).then(d => {
+            location.reload();
+        });
+    }
+}
+
+function deleteChat(sessionId) {
+    if (confirm('Delete this chat?')) {
+        fetch('/chat/delete/' + sessionId, { method: 'POST' })
+            .then(r => r.json())
+            .then(d => { window.location.href = '/chatv2'; });
+    }
+}
+
+function newChat() {
+    fetch('/chat/new', { method: 'POST' })
+        .then(r => r.json())
+        .then(d => {
+            if (d.session_id) window.location.href = '/chatv2/' + d.session_id;
+        });
+}
+
+scrollToBottom();
+
+// Render markdown on page load
+document.addEventListener('DOMContentLoaded', function() {
+    if (typeof marked !== 'undefined') {
+        document.querySelectorAll('.v2-message-content[data-markdown]').forEach(function(el) {
+            el.innerHTML = marked.parse(el.getAttribute('data-markdown'));
+        });
+    }
+});
+</script>
+</body>
+</html>
+""", session_id=session_id, session_name=session_name, messages=messages, sidebar_sessions=sidebar_sessions, active_page='chat')
 
 @app.route("/login", methods=["GET", "POST"])
 def login():
